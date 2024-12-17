@@ -1,3 +1,4 @@
+# Bibliotecas Utilizadas:
 import os
 import time
 import torch
@@ -8,6 +9,90 @@ import gymnasium as gym
 import torch.optim as optim
 import torch.backends.cudnn
 from torch.distributions.categorical import Categorical
+
+# Funções Utilizadas ##################################################################################################
+
+def make_env(env_id, idx):
+    # Função auxiliar para criar o ambiente Gym.
+    # Usamos RecordEpisodeStatistics para obter recompensas e comprimentos de episódio.
+    def thunk():
+        env = gym.make(env_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        return env
+    return thunk
+    
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    # Inicialização ortogonal dos pesos, conforme boas práticas sugeridas em PPO e outros trabalhos
+    torch.nn.init.orthogonal_(layer.weight, std)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
+# Classes #############################################################################################################
+
+class Args:
+    # Classe simples para armazenar hiperparâmetros e configurações.
+    # Esses parâmetros seguem o padrão PPO: lr, gamma, lambda (GAE), clipping, etc.
+    def __init__(self, num_steps=5, num_envs=1, learning_rate=3e-4, gamma=0.99, gae_lambda=0.95,
+                 update_epochs=4, batch_size=64, minibatch_size=32, clip_coef=0.2, ent_coef=0.01,
+                 vf_coef=0.5, max_grad_norm=0.5, anneal_lr=True, cuda=False, exp_name="ppo_cartpole",
+                 num_iterations=1000,printOn=True):
+        self.num_steps = num_steps
+        self.num_envs = num_envs
+        self.learning_rate = learning_rate
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.update_epochs = update_epochs
+        self.batch_size = batch_size
+        self.minibatch_size = minibatch_size
+        self.clip_coef = clip_coef
+        self.ent_coef = ent_coef
+        self.vf_coef = vf_coef
+        self.max_grad_norm = max_grad_norm
+        self.anneal_lr = anneal_lr
+        self.cuda = cuda
+        self.exp_name = exp_name
+        self.num_iterations = num_iterations
+        self.printOn = printOn
+
+class PPOAgent(nn.Module):
+    # Agente PPO: Redes ator e crítico
+    # Conforme descrito no paper, usamos duas redes compartilhando camadas iniciais ou separadas:
+    # Aqui temos um ator (para logitos de ação) e um crítico (para valor), ambos MLPs.
+    def __init__(self, observation_space, action_space):
+        super().__init__()
+        obs_shape = observation_space.shape
+        n_actions = action_space.n
+
+        # Rede crítica
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(np.prod(obs_shape), 64)), # np.prod((i,j)) = i*j
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 1), std=1.0),
+        )
+
+        # Rede ator
+        self.actor = nn.Sequential(
+            layer_init(nn.Linear(np.prod(obs_shape), 64)), # np.prod((i,j)) = i*j
+            nn.Tanh(),
+            layer_init(nn.Linear(64, 64)),
+            nn.Tanh(),
+            layer_init(nn.Linear(64, n_actions), std=0.01),
+        )
+
+    def get_value(self, x):
+        return self.critic(x)
+
+    def get_action_and_value(self, x, action=None):
+        # Atores PPO geralmente produzem uma distribuição de probabilidade sobre ações.
+        logits = self.actor(x)
+        probs = Categorical(logits=logits) # Aqui usamos a distribuição Categorical (Multinomial) para ações discretas.
+        if action is None:
+            action = probs.sample()  # Amostra aleatóriamente uma ação da política atual
+        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+
+
 
 class PPOTrainer:
     def __init__(self, agent, envs, args):
@@ -68,22 +153,55 @@ class PPOTrainer:
             self.optimizer.param_groups[0]["lr"] = lrnow
 
     def compute_advantages(self, next_value):
-        # Cálculo das vantagens usando GAE (Generalized Advantage Estimation)
-        # Conforme o artigo do PPO, usamos GAE para reduzir a variância no cálculo das vantagens.
-        # A vantagem (advantage) reflete o quão boa foi a ação comparada ao valor esperado.
+        # Inicializa um tensor para armazenar as vantagens (GAE)
+        # As vantagens medem quão boa foi uma ação comparada ao valor esperado.
         advantages = torch.zeros_like(self.rewards).to(self.device)
+        
+        # Inicializa a variável lastgaelam, que armazena o GAE para o próximo passo
         lastgaelam = 0
+    
+        # Percorre os passos na ordem reversa (do final para o início do rollout)
+        # Isso é necessário porque o cálculo da vantagem depende do próximo valor.
         for t in reversed(range(self.args.num_steps)):
+    
+            # Se estamos no último passo da trajetória (rollout)
             if t == self.args.num_steps - 1:
-                nextnonterminal = 1.0 - self.next_done
+                # Se o episódio terminou no próximo estado, o nextnonterminal será 0.
+                nextnonterminal = 1.0 - self.next_done  # 1 se não terminou, 0 se terminou.
+                # Valor estimado do próximo estado
                 nextvalues = next_value
             else:
-                nextnonterminal = 1.0 - self.dones[t + 1]
-                nextvalues = self.values[t + 1]
+                # Caso contrário, usamos os valores do próximo passo na trajetória
+                nextnonterminal = 1.0 - self.dones[t + 1]  # 1 se não terminou, 0 se terminou.
+                nextvalues = self.values[t + 1]  # Valor do próximo estado já armazenado no rollout
+    
+            # 1. Cálculo do **delta**, que mede a vantagem imediata
+            '''
+            delta captura o **erro temporal** (TD Error), ou seja:
+            - A diferença entre a recompensa recebida + valor futuro descontado e o valor atual.
+            - Se delta > 0: a ação foi melhor do que o valor estimado.
+            - Se delta < 0: a ação foi pior do que o valor estimado.
+            '''
             delta = self.rewards[t] + self.args.gamma * nextvalues * nextnonterminal - self.values[t]
+            
+    
+            # 2. Cálculo da vantagem (GAE) acumulada
+            # GAE combina o delta atual com a vantagem acumulada futura, amortizada pelo fator lambda.
             advantages[t] = lastgaelam = delta + self.args.gamma * self.args.gae_lambda * nextnonterminal * lastgaelam
+            '''
+            Interpretação:
+            - `delta` contribui para a vantagem atual.
+            - `lastgaelam` acumula as vantagens futuras, descontadas por gamma e amortizadas por lambda.
+            - Isso cria uma estimativa "suavizada" das vantagens, reduzindo a variância.
+            '''
+        
+        # 3. Cálculo dos retornos
+        # O retorno é simplesmente a soma da vantagem (GAE) com o valor do estado.
+        # Retorno = Vantagem (GAE) + Valor estimado
         returns = advantages + self.values
+        
         return advantages, returns
+
 
     def train_loop(self):
         # Loop de treinamento principal do PPO
@@ -231,82 +349,3 @@ class PPOTrainer:
 
     def get_metrics(self):
         return self.metrics
-
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    # Inicialização ortogonal dos pesos, conforme boas práticas sugeridas em PPO e outros trabalhos
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-class PPOAgent(nn.Module):
-    # Agente PPO: Redes ator e crítico
-    # Conforme descrito no paper, usamos duas redes compartilhando camadas iniciais ou separadas:
-    # Aqui temos um ator (para logitos de ação) e um crítico (para valor), ambos MLPs.
-    def __init__(self, observation_space, action_space):
-        super().__init__()
-        obs_shape = observation_space.shape
-        n_actions = action_space.n
-
-        # Rede crítica
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.prod(obs_shape), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
-        )
-
-        # Rede ator
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.prod(obs_shape), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, n_actions), std=0.01),
-        )
-
-    def get_value(self, x):
-        return self.critic(x)
-
-    def get_action_and_value(self, x, action=None):
-        # Atores PPO geralmente produzem uma distribuição de probabilidade sobre ações.
-        # Aqui usamos a distribuição Categorical para ações discretas.
-        logits = self.actor(x)
-        probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()  # Amostra ação da política atual
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
-
-class Args:
-    # Classe simples para armazenar hiperparâmetros e configurações.
-    # Esses parâmetros seguem o padrão PPO: lr, gamma, lambda (GAE), clipping, etc.
-    def __init__(self, num_steps=5, num_envs=1, learning_rate=3e-4, gamma=0.99, gae_lambda=0.95,
-                 update_epochs=4, batch_size=64, minibatch_size=32, clip_coef=0.2, ent_coef=0.01,
-                 vf_coef=0.5, max_grad_norm=0.5, anneal_lr=True, cuda=False, exp_name="ppo_cartpole",
-                 num_iterations=1000,printOn=True):
-        self.num_steps = num_steps
-        self.num_envs = num_envs
-        self.learning_rate = learning_rate
-        self.gamma = gamma
-        self.gae_lambda = gae_lambda
-        self.update_epochs = update_epochs
-        self.batch_size = batch_size
-        self.minibatch_size = minibatch_size
-        self.clip_coef = clip_coef
-        self.ent_coef = ent_coef
-        self.vf_coef = vf_coef
-        self.max_grad_norm = max_grad_norm
-        self.anneal_lr = anneal_lr
-        self.cuda = cuda
-        self.exp_name = exp_name
-        self.num_iterations = num_iterations
-        self.printOn = printOn
-
-def make_env(env_id, idx):
-    # Função auxiliar para criar o ambiente Gym.
-    # Usamos RecordEpisodeStatistics para obter recompensas e comprimentos de episódio.
-    def thunk():
-        env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        return env
-    return thunk
