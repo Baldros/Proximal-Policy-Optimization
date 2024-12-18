@@ -12,7 +12,7 @@ import torch.backends.cudnn
 from gymnasium.spaces import Discrete, Box
 from torch.distributions import Categorical, Normal
 
-# Functions Used ##################################################################################################
+# Functions ##################################################################################################
 
 def make_env(env_id, idx):
     # Helper function to create the Gym environment.
@@ -43,7 +43,7 @@ def get_action_dim(action_space):
     else:
         raise NotImplementedError(f"Action space of type {type(action_space)} not supported.")
 
-# Classes #############################################################################################################
+# Classes ########################################################################################################
 
 class Args:
     """
