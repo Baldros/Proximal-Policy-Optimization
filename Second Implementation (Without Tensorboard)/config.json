@@ -1,0 +1,23 @@
+{
+    "gym_task":"CartPole-v1",
+    "num_steps": 128,
+    "num_envs": 4,
+    "learning_rate": 0.00025,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "update_epochs": 4,
+    "batch_size": 512,
+    "minibatch_size": 128,
+    "clip_coef": 0.2,
+    "ent_coef": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "anneal_lr": true,
+    "cuda": false,
+    "exp_name": "ppo_cartpole",
+    "num_iterations": 1000,
+    "printOn": true,
+    "lineInput": 64,
+    "columnInput": 64,
+    "activation": "tanh"
+}
