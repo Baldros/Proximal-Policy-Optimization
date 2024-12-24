@@ -4,17 +4,19 @@
 
 ## Proximal Policy Optmization:
 
-O **PPO** é considerado um **método de Otimização de Política** que complementa sua estrutura de aprendizado com uma **arquitetura de ator-critico**, para estabilizar o gradiente e estimar vantagens (**Advantage Function**), que se dá por:
+**PPO** is considered a **Policy Optimization method** that enhances its learning structure with an **actor-critic architecture** to stabilize the gradient and estimate advantages (**Advantage Function**), which is given by:
 
 $$A_t = \delta_t + (\gamma \lambda)\delta_{t+1} + \cdots + (\gamma \lambda)^{T-t+1}\delta_{T-1}, \quad \text{where } \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$$
 
-A estratégia principal é buscar manter a nova política em uma região próxima da política anterior, reduzindo o risco de grandes saltos de desempenho negativo. Para isso, ele utiliza uma função de perda com **clipping**, limitando a diferença entre a probabilidade de uma ação sob a nova política e a probabilidade sob a política antiga. Dessa forma, evita atualizações excessivas e promove maior estabilidade durante o treinamento.
+The main strategy is to keep the new policy within a region close to the previous policy, reducing the risk of large negative performance jumps. To achieve this, it uses a **clipped loss function**, which limits the difference between the probability of an action under the new policy and the probability under the old policy.
 
 $$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left(r_t(\theta)\hat{A}_t, \text{clip}\left(r_t(\theta), 1 - \epsilon, 1 + \epsilon\right)\hat{A}_t\right)\right]$$
 
-onde,
+where,
 
 $$r_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)}$$
+
+This approach prevents excessive updates and promotes greater stability during training.
 
 
 # Repository Organization:
