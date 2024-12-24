@@ -4,7 +4,12 @@
 
 ## Proximal Policy Optmization:
 
-O **PPO** é considerado um **método de Otimização de Política** que complementa sua estrutura de aprendizado com uma **arquitetura de ator-critico**, para estimar vantagens (**Advantage Function**) e estabilizar o gradiente, cuja a estratégia principal é buscar manter a nova política em uma região próxima da política anterior, reduzindo o risco de grandes saltos de desempenho negativo. Para isso, ele utiliza uma função de perda com **clipping**, limitando a diferença entre a probabilidade de uma ação sob a nova política e a probabilidade sob a política antiga. Dessa forma, evita atualizações excessivas e promove maior estabilidade durante o treinamento.
+O **PPO** é considerado um **método de Otimização de Política** que complementa sua estrutura de aprendizado com uma **arquitetura de ator-critico**, para estimar vantagens (**Advantage Function**) e estabilizar o gradiente, cuja a estratégia principal é buscar manter a nova política em uma região próxima da política anterior, reduzindo o risco de grandes saltos de desempenho negativo.
+
+$$A_t = \delta_t + (\gamma \lambda)\delta_{t+1} + \cdots + (\gamma \lambda)^{T-t+1}\delta_{T-1}, \quad \text{where } \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
+$$
+
+Para isso, ele utiliza uma função de perda com **clipping**, limitando a diferença entre a probabilidade de uma ação sob a nova política e a probabilidade sob a política antiga. Dessa forma, evita atualizações excessivas e promove maior estabilidade durante o treinamento.
 
 $$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left(r_t(\theta)\hat{A}_t, \text{clip}\left(r_t(\theta), 1 - \epsilon, 1 + \epsilon\right)\hat{A}_t\right)\right]$$
 
