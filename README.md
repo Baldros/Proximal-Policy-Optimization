@@ -2,6 +2,8 @@
 
 **Reinforcement Learning (RL)** is an iterative machine learning paradigm in which an **agent** learns to make decisions within an **environment** by interacting with it. For each **action** taken, the agent receives a **reward** (positive or negative), and the goal is to **maximize** the sum of these rewards over time. There is a wide range of learning methods in the context of RL, such as policy-based methods, value-based methods, and hybrid methods (like actor-critic), among others. Here, the **Proximal Policy Optimization (PPO)** algorithm is implemented—a policy optimization method created by researchers at [OpenAI](https://openai.com/index/openai-baselines-ppo/)—which I am using to solve gamified tasks in the [Gymnasium](https://gymnasium.farama.org/) environment. 
 
+![CartPole](agent_performance(CartPole-v1).gif)
+
 ## Proximal Policy Optmization:
 
 **PPO** is considered a **Policy Optimization method** that enhances its learning structure with an **actor-critic architecture** to stabilize the gradient and estimate advantages (**Advantage Function**), which is given by:
